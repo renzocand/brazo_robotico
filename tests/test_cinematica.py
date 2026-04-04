@@ -6,6 +6,7 @@ def test_es_alcanzable():
     # L1=18, L2=20
     assert cin.es_alcanzable(10, 10, 18, 20) == True
     assert cin.es_alcanzable(50, 50, 18, 20) == False
+    assert cin.es_alcanzable(10, 10, 18, 20, 8) == True
 
 def test_calcular_angulos():
     cin = CinematicaInversa()
@@ -21,3 +22,10 @@ def test_rotacion_base_cambia_con_lado_del_tablero():
 
     assert izquierda.theta_rot > 90.0
     assert derecha.theta_rot < 90.0
+
+def test_altura_z_modifica_inclinacion_primer_brazo():
+    cin = CinematicaInversa()
+    plano = cin.calcular_angulos(8, 16, 18, 20, z=0)
+    elevado = cin.calcular_angulos(8, 16, 18, 20, z=6)
+
+    assert elevado.theta1 > plano.theta1
