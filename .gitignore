@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+env/
+venv/
+.venv/
+
+# Archivos de configuración del editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos de logs
+*.log
+
+# Pytest cache
+.pytest_cache/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos de salida del brazo robótico o simulaciones
+*.out
+*.dat
