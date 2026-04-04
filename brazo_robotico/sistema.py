@@ -9,18 +9,26 @@ class SistemaBrazo:
         self.cinematica = CinematicaInversa()
         self.L1 = LARGO_PRIMER_BRAZO
         self.L2 = LARGO_SEGUNDO_BRAZO
-        self.offset = OFFSET_BRAZO  # distancia vertical del brazo al tablero
+        self.offset = OFFSET_BRAZO
 
-    # Wrapper para convertir casilla de ajedrez a coordenadas XY
     def casilla_a_xy(self, casilla: str) -> Coordenada:
-        coord = self.tablero.casilla_a_xy(casilla)
-        # sumamos el offset físico para el cálculo real del brazo
-        return Coordenada(coord.x, coord.y + self.offset)
+        """
+        Convierte una casilla del tablero a coordenadas del robot.
 
-    # Wrapper para verificar si la posición es alcanzable
+        El eje X queda centrado en el tablero para que la rotación de la base
+        distinga correctamente los lados izquierdo y derecho. El eje Y se mide
+        desde la base hasta el centro de la casilla objetivo.
+        """
+        coord = self.tablero.casilla_a_xy(casilla)
+        medio_tablero = self.tablero.ancho / 2
+        medio_casilla = self.tablero.tamaño_casilla / 2
+
+        x_robot = coord.x - medio_tablero + medio_casilla
+        y_robot = coord.y + self.offset + medio_casilla
+        return Coordenada(x_robot, y_robot)
+
     def es_alcanzable(self, x: float, y: float) -> bool:
         return self.cinematica.es_alcanzable(x, y, self.L1, self.L2)
 
-    # Wrapper para calcular los ángulos (ahora 3)
     def calcular_angulos(self, x: float, y: float) -> Angulos:
-        return self.cinematica.calcular_angulos(x, y + self.offset, self.L1, self.L2)
+        return self.cinematica.calcular_angulos(x, y, self.L1, self.L2)
