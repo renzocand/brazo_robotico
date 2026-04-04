@@ -12,7 +12,15 @@ class CinematicaInversa:
         distancia = sqrt((distancia_horizontal**2) + (z**2))
         return distancia <= (L1 + L2) and distancia >= abs(L1 - L2)
 
-    def calcular_angulos(self, x: float, y: float, L1: float, L2: float, z: float = 0.0) -> Angulos:
+    def calcular_angulos(
+        self,
+        x: float,
+        y: float,
+        L1: float,
+        L2: float,
+        z: float = 0.0,
+        preferencia_codo: str = "arriba",
+    ) -> Angulos:
         """
         Calcula los 3 ángulos del brazo.
 
@@ -21,6 +29,7 @@ class CinematicaInversa:
         z: altura respecto al plano del tablero.
 
         La base gira en XY y el hombro/codo se resuelven en el plano r-z.
+        Se soportan dos ramas de solución: codo "arriba" o "abajo".
         """
         theta_rot = 90.0 - degrees(atan2(x, y))
         distancia_radial = sqrt(x**2 + y**2)
@@ -31,7 +40,9 @@ class CinematicaInversa:
 
         cos_theta2 = (distancia_objetivo**2 - L1**2 - L2**2) / (2 * L1 * L2)
         cos_theta2 = max(min(cos_theta2, 1.0), -1.0)
-        theta2 = degrees(acos(cos_theta2))
+
+        signo_codo = -1.0 if str(preferencia_codo).lower() == "arriba" else 1.0
+        theta2 = signo_codo * degrees(acos(cos_theta2))
 
         theta2_rad = radians(theta2)
         k1 = L1 + L2 * cos(theta2_rad)

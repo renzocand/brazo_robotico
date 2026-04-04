@@ -235,11 +235,11 @@ def _proyectar_brazo_3d(angulos: Angulos, L1: float, L2: float, base_y: float = 
 
     codo_x = codo_radio * cos(theta_base)
     codo_y = base_y + (codo_radio * sin(theta_base))
-    codo_z = max(0.0, -codo.z)
+    codo_z = max(0.0, codo.z)
 
     efector_x = efector_radio * cos(theta_base)
     efector_y = base_y + (efector_radio * sin(theta_base))
-    efector_z = max(1.2, max(0.0, -efector.z))
+    efector_z = max(1.2, max(0.0, efector.z))
 
     return [(0.0, base_y, 0.0), (codo_x, codo_y, codo_z), (efector_x, efector_y, efector_z)]
 

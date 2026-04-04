@@ -6,6 +6,7 @@ from brazo_robotico.config import (
     LARGO_PRIMER_BRAZO,
     LARGO_SEGUNDO_BRAZO,
     OFFSET_BRAZO,
+    PREFERENCIA_CODO,
     SERVO_BASE_OFFSET,
     SERVO_BASE_SIGNO,
     SERVO_BRAZO1_OFFSET,
@@ -23,6 +24,7 @@ class SistemaBrazo:
         self.L1 = LARGO_PRIMER_BRAZO
         self.L2 = LARGO_SEGUNDO_BRAZO
         self.offset = OFFSET_BRAZO
+        self.preferencia_codo = PREFERENCIA_CODO
 
     def casilla_a_xy(self, casilla: str) -> Coordenada:
         return self.casilla_a_xyz(casilla)
@@ -47,13 +49,13 @@ class SistemaBrazo:
         return self.cinematica.es_alcanzable(x, y, self.L1, self.L2, z)
 
     def calcular_angulos(self, x: float, y: float, z: float = 0.0) -> Angulos:
-        return self.cinematica.calcular_angulos(x, y, self.L1, self.L2, z)
+        return self.cinematica.calcular_angulos(x, y, self.L1, self.L2, z, self.preferencia_codo)
 
     def angulos_a_servos(self, angulos: Angulos) -> AngulosServo:
         return AngulosServo(
             base=self._convertir_a_servo(angulos.theta_rot, SERVO_BASE_OFFSET, SERVO_BASE_SIGNO),
             brazo1=self._convertir_a_servo(angulos.theta1, SERVO_BRAZO1_OFFSET, SERVO_BRAZO1_SIGNO),
-            brazo2=self._convertir_a_servo(angulos.theta2, SERVO_BRAZO2_OFFSET, SERVO_BRAZO2_SIGNO),
+            brazo2=self._convertir_a_servo(abs(angulos.theta2), SERVO_BRAZO2_OFFSET, SERVO_BRAZO2_SIGNO),
         )
 
     def _convertir_a_servo(self, angulo: float, offset: float, signo: float) -> float:

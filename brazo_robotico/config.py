@@ -10,6 +10,11 @@ LARGO_SEGUNDO_BRAZO = 19.0  # cm
 # Distancia del brazo al tablero
 OFFSET_BRAZO = 10.0  # cm
 
+# Rama preferida de la cinemática inversa.
+# "arriba": el codo queda por encima del tablero.
+# "abajo": solución espejo.
+PREFERENCIA_CODO = "arriba"
+
 # Conversión de ángulos matemáticos a servos.
 # Ajusta estos offsets y sentidos según el montaje real del brazo.
 SERVO_MIN = 0.0
