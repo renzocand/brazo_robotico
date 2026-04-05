@@ -52,7 +52,7 @@ def mostrar_visualizacion_2d(sistema, casilla_inicio: str, casilla_fin: str, sec
     plt.close(fig)
 
 
-def mostrar_visualizacion_3d(sistema, casilla_inicio: str, casilla_fin: str, secuencia: dict[str, Angulos]) -> None:
+def mostrar_visualizacion_3d(sistema, casilla_inicio: str, casilla_fin: str, secuencia: dict[str, Angulos], vista: str = "ambos") -> None:
     import matplotlib.pyplot as plt
 
     coord_inicio = sistema.casilla_a_xy(casilla_inicio)
@@ -62,52 +62,61 @@ def mostrar_visualizacion_3d(sistema, casilla_inicio: str, casilla_fin: str, sec
     servos_inicio = sistema.angulos_a_servos(ang_inicio)
     servos_fin = sistema.angulos_a_servos(ang_fin)
 
+    mostrar_inicio = vista in ("inicio", "ambos")
+    mostrar_fin = vista in ("final", "ambos")
+
     fig = plt.figure(figsize=(13, 9))
     ax = fig.add_subplot(111, projection="3d")
-    fig.suptitle("Visualización 3D del Brazo Robótico", fontsize=16)
+    titulo_vista = {"inicio": "Inicio", "final": "Final", "ambos": "Inicio y Final"}[vista]
+    fig.suptitle(f"Visualización 3D — {titulo_vista}", fontsize=16)
 
     base_y = 0.0
 
     _dibujar_tablero_3d(ax, sistema, casilla_inicio, casilla_fin)
 
-    brazo_inicio = _proyectar_brazo_3d(ang_inicio, sistema.L1, sistema.L2, base_y=base_y)
-    brazo_fin = _proyectar_brazo_3d(ang_fin, sistema.L1, sistema.L2, base_y=base_y)
+    puntos_todos = [(0.0, base_y, 0.0)]
 
-    _dibujar_brazo_3d(ax, brazo_inicio, "#0b7285", f"Inicio {casilla_inicio}")
-    _dibujar_brazo_3d(ax, brazo_fin, "#c92a2a", f"Final {casilla_fin}")
+    if mostrar_inicio:
+        brazo_inicio = _proyectar_brazo_3d(ang_inicio, sistema.L1, sistema.L2, base_y=base_y)
+        _dibujar_brazo_3d(ax, brazo_inicio, "#0b7285", f"Inicio {casilla_inicio}")
+        _anotar_angulos_3d(ax, brazo_inicio, servos_inicio, "#0b7285", lado="izquierda")
+        puntos_todos += [(coord_inicio.x, coord_inicio.y, 0.0), *brazo_inicio]
+
+    if mostrar_fin:
+        brazo_fin = _proyectar_brazo_3d(ang_fin, sistema.L1, sistema.L2, base_y=base_y)
+        _dibujar_brazo_3d(ax, brazo_fin, "#c92a2a", f"Final {casilla_fin}")
+        _anotar_angulos_3d(ax, brazo_fin, servos_fin, "#c92a2a", lado="derecha")
+        puntos_todos += [(coord_fin.x, coord_fin.y, 0.0), *brazo_fin]
 
     ax.scatter(0, base_y, 0, color="#212529", s=45)
     ax.text(0.6, base_y + 0.4, 0.2, "Base", color="#212529")
     ax.plot([0, 0], [0, sistema.offset], [0, 0], linestyle="--", color="#868e96", linewidth=1.2)
 
     altura_indicador = 1.2
-    ax.plot([coord_inicio.x, coord_inicio.x], [coord_inicio.y, coord_inicio.y], [0, altura_indicador], linestyle="--", color="#0b7285", linewidth=1.2)
-    ax.plot([coord_fin.x, coord_fin.x], [coord_fin.y, coord_fin.y], [0, altura_indicador], linestyle="--", color="#c92a2a", linewidth=1.2)
-    ax.scatter(coord_inicio.x, coord_inicio.y, altura_indicador, color="#0b7285", s=72, depthshade=False)
-    ax.scatter(coord_fin.x, coord_fin.y, altura_indicador, color="#c92a2a", s=72, depthshade=False)
-    ax.text(coord_inicio.x, coord_inicio.y, altura_indicador + 0.45, f"{casilla_inicio}", color="#0b7285", fontsize=10, weight="bold")
-    ax.text(coord_fin.x, coord_fin.y, altura_indicador + 0.45, f"{casilla_fin}", color="#c92a2a", fontsize=10, weight="bold")
+    if mostrar_inicio:
+        ax.plot([coord_inicio.x, coord_inicio.x], [coord_inicio.y, coord_inicio.y], [0, altura_indicador], linestyle="--", color="#0b7285", linewidth=1.2)
+        ax.scatter(coord_inicio.x, coord_inicio.y, altura_indicador, color="#0b7285", s=72, depthshade=False)
+        ax.text(coord_inicio.x, coord_inicio.y, altura_indicador + 0.45, f"{casilla_inicio}", color="#0b7285", fontsize=10, weight="bold")
 
-    resumen = (
-        f"Inicio  Base={servos_inicio.base:.1f}°, S1={servos_inicio.brazo1:.1f}°, S2={servos_inicio.brazo2:.1f}°\n"
-        f"Final   Base={servos_fin.base:.1f}°, S1={servos_fin.brazo1:.1f}°, S2={servos_fin.brazo2:.1f}°"
-    )
+    if mostrar_fin:
+        ax.plot([coord_fin.x, coord_fin.x], [coord_fin.y, coord_fin.y], [0, altura_indicador], linestyle="--", color="#c92a2a", linewidth=1.2)
+        ax.scatter(coord_fin.x, coord_fin.y, altura_indicador, color="#c92a2a", s=72, depthshade=False)
+        ax.text(coord_fin.x, coord_fin.y, altura_indicador + 0.45, f"{casilla_fin}", color="#c92a2a", fontsize=10, weight="bold")
+
+    lineas_resumen = []
+    if mostrar_inicio:
+        lineas_resumen.append(f"Inicio  Base={servos_inicio.base:.1f}°, S1={servos_inicio.brazo1:.1f}°, S2={servos_inicio.brazo2:.1f}°")
+    if mostrar_fin:
+        lineas_resumen.append(f"Final   Base={servos_fin.base:.1f}°, S1={servos_fin.brazo1:.1f}°, S2={servos_fin.brazo2:.1f}°")
     ax.text2D(
         0.03,
         0.95,
-        resumen,
+        "\n".join(lineas_resumen),
         transform=ax.transAxes,
         bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9},
     )
 
-    puntos = [
-        (0.0, base_y, 0.0),
-        (coord_inicio.x, coord_inicio.y, 0.0),
-        (coord_fin.x, coord_fin.y, 0.0),
-        *brazo_inicio,
-        *brazo_fin,
-    ]
-    _ajustar_limites_3d(ax, puntos)
+    _ajustar_limites_3d(ax, puntos_todos)
 
     ax.set_xlabel("X lateral (cm)")
     ax.set_ylabel("Y frontal (cm)")
@@ -242,6 +251,22 @@ def _proyectar_brazo_3d(angulos: Angulos, L1: float, L2: float, base_y: float = 
     efector_z = max(1.2, max(0.0, efector.z))
 
     return [(0.0, base_y, 0.0), (codo_x, codo_y, codo_z), (efector_x, efector_y, efector_z)]
+
+
+def _anotar_angulos_3d(ax, puntos: list[tuple[float, float, float]], servos, color: str, lado: str = "izquierda") -> None:
+    base, codo, _ = puntos
+    bbox = {"boxstyle": "round,pad=0.2", "facecolor": "white", "edgecolor": color, "alpha": 0.92}
+
+    desplz_x = -3.0 if lado == "izquierda" else 3.0
+    ha = "right" if lado == "izquierda" else "left"
+
+    ax.text(base[0] + desplz_x, base[1], base[2] + 2.5,
+            f"S1={servos.brazo1:.0f}°", color=color, fontsize=9, weight="bold",
+            bbox=bbox, ha=ha, zorder=100)
+
+    ax.text(codo[0], codo[1], codo[2] + 2.0,
+            f"S2={servos.brazo2:.0f}°", color=color, fontsize=9, weight="bold",
+            bbox=bbox, ha="center", zorder=100)
 
 
 def _dibujar_brazo_3d(ax, puntos: list[tuple[float, float, float]], color: str, etiqueta: str) -> None:

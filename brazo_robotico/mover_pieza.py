@@ -54,7 +54,14 @@ def main():
     if modo_vista not in ("n", "no"):
         try:
             if modo_vista in ("3", "3d"):
-                mostrar_visualizacion_3d(sistema, casilla_inicio, casilla_fin, secuencia)
+                vista_brazo = console.input("¿Mostrar brazo? [bold](inicio/final/ambos)[/bold] (Enter=ambos): ").strip().lower()
+                if vista_brazo in ("i", "inicio"):
+                    vista = "inicio"
+                elif vista_brazo in ("f", "final"):
+                    vista = "final"
+                else:
+                    vista = "ambos"
+                mostrar_visualizacion_3d(sistema, casilla_inicio, casilla_fin, secuencia, vista=vista)
             else:
                 mostrar_visualizacion_2d(sistema, casilla_inicio, casilla_fin, secuencia)
         except ModuleNotFoundError as error:
