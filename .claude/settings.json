@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -c \"from brazo_robotico.ajedrez import dibujar_tablero, JuegoAjedrez; print\\('OK'\\)\")"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(python -c \"import colorama; print\\('colorama available'\\)\")",
+      "Bash(python -c \"import sys; sys.stdout.write\\('\\\\033[31mRED\\\\033[0m\\\\n'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(.venv/Scripts/python.exe -c \"from brazo_robotico.ajedrez import _posicion_inicial, movimientos_legales, EstadoJuego; t = _posicion_inicial\\(\\); e = EstadoJuego\\(tablero=t, turno='W'\\); movs = movimientos_legales\\(e, 'W'\\); print\\(f'Movimientos legales Blancas apertura: {len\\(movs\\)}'\\); movs_b = movimientos_legales\\(e, 'B'\\); print\\(f'Movimientos legales Negras apertura: {len\\(movs_b\\)}'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ':*)"
+    ]
+  }
+}
