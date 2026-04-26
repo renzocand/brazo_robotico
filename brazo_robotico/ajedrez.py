@@ -4,18 +4,33 @@
 # Rendering: rich
 
 import copy
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from rich.console import Console
 from rich.text import Text
+from rich.table import Table
 from rich.panel import Panel
 from rich.align import Align
 from rich.live import Live
 from rich.spinner import Spinner
 
-from brazo_robotico.tablero import Tablero
-from brazo_robotico.config import DIAMETRO_CASILLA
+from brazo_robotico.sistema import SistemaBrazo
+from brazo_robotico.tipos import AngulosServo
+from brazo_robotico.arduino_link import ArduinoLink
+from brazo_robotico.config import (
+    ARDUINO_HABILITADO,
+    ARDUINO_PUERTO,
+    ARDUINO_BAUDIOS,
+    ARDUINO_MS_POR_PASO,
+    ARDUINO_PAUSA_AGARRE_MS,
+    ARDUINO_PARKED_BASE,
+    ARDUINO_PARKED_BRAZO1,
+    ARDUINO_PARKED_BRAZO2,
+    PINZA_ABIERTA,
+    PINZA_CERRADA,
+)
 
 # ──────────────────────────────────────────────
 # CONSTANTES
@@ -769,7 +784,10 @@ class JuegoAjedrez:
         self.capturadas_por_ti: list = []    # piezas blancas capturadas por el jugador
         self.capturadas_por_pc: list = []    # piezas negras capturadas por la PC
         self.jugada_num: int = 1
-        self._tablero_robot = Tablero(tamaño_casilla=DIAMETRO_CASILLA)
+        self._sistema_brazo = SistemaBrazo()
+        # Última secuencia de servos calculada — la que se mandaría al Arduino
+        self.ultima_secuencia_servos: Optional[dict] = None
+        self._arduino: Optional[ArduinoLink] = None
 
     # ── Inicio ──────────────────────────────
 
@@ -777,11 +795,39 @@ class JuegoAjedrez:
         console.clear()
         self._bienvenida()
         self.profundidad = self._elegir_dificultad()
+        self._inicializar_arduino()
         self.estado = EstadoJuego(
             tablero=_posicion_inicial(),
             turno='W',   # PC (Blancas) abre siempre
         )
-        self._bucle()
+        try:
+            self._bucle()
+        finally:
+            if self._arduino is not None and self._arduino.conectado:
+                self._arduino.cerrar()
+
+    def _inicializar_arduino(self):
+        """Si está habilitado, intenta conectar con el Arduino. Si falla, sigue en modo simulación."""
+        if not ARDUINO_HABILITADO:
+            console.print("  [dim]Modo simulación (Arduino deshabilitado en config.py)[/dim]")
+            return
+
+        puerto = ARDUINO_PUERTO or ArduinoLink.detectar_puerto()
+        if puerto is None:
+            console.print("  [yellow]⚠ No se detectó ningún Arduino. Se sigue en modo simulación.[/yellow]")
+            return
+
+        try:
+            link = ArduinoLink(puerto=puerto, baudios=ARDUINO_BAUDIOS)
+            link.conectar()
+            if link.ping():
+                self._arduino = link
+                console.print(f"  [green]✓ Arduino conectado en {puerto}[/green]")
+            else:
+                console.print(f"  [yellow]⚠ Arduino en {puerto} no respondió a PING. Modo simulación.[/yellow]")
+                link.cerrar()
+        except Exception as e:
+            console.print(f"  [yellow]⚠ Error abriendo {puerto}: {e}. Modo simulación.[/yellow]")
 
     def _bienvenida(self):
         console.print(Panel(
@@ -858,6 +904,168 @@ class JuegoAjedrez:
         )
         console.rule(turno_txt, style="dim")
 
+    # ── Brazo robótico (cinemática + servos) ─────────────
+
+    def _emitir_movimiento_brazo(self, desde: str, hasta: str, autor: str) -> None:
+        """
+        Calcula y muestra los ángulos de servos para el movimiento desde→hasta.
+        Esta es la información que se enviará al Arduino.
+        """
+        try:
+            servos_desde = self._calcular_servos(desde)
+            servos_hasta = self._calcular_servos(hasta)
+        except ValueError as e:
+            console.print(f"  [yellow]⚠ Brazo: {e}[/yellow]")
+            self.ultima_secuencia_servos = None
+            return
+
+        self.ultima_secuencia_servos = {
+            'autor': autor,
+            'desde': desde,
+            'hasta': hasta,
+            'servos_desde': servos_desde,
+            'servos_hasta': servos_hasta,
+        }
+
+        # Línea CSV lista para enviar al Arduino (base,b1,b2 origen | base,b1,b2 destino)
+        csv = (
+            f"{servos_desde.base:.1f},{servos_desde.brazo1:.1f},{servos_desde.brazo2:.1f}|"
+            f"{servos_hasta.base:.1f},{servos_hasta.brazo1:.1f},{servos_hasta.brazo2:.1f}"
+        )
+        console.print(
+            f"\n  [bold cyan]Brazo robótico — {autor}: {desde} → {hasta}[/bold cyan]"
+        )
+        console.print(f"  [dim]→ Arduino: {csv}[/dim]")
+
+        # Si el Arduino está conectado, enviar primero (no bloquea)
+        arduino_activo = self._arduino is not None and self._arduino.conectado
+        if arduino_activo:
+            try:
+                self._arduino.enviar_sin_esperar(servos_desde, servos_hasta)
+            except Exception as e:
+                console.print(f"  [red]✗ Error enviando al Arduino: {e}[/red]")
+                arduino_activo = False
+
+        # Animar el movimiento mientras esperamos OK del Arduino
+        respuesta = self._animar_brazo(servos_desde, servos_hasta, arduino_activo)
+
+        if arduino_activo:
+            if respuesta.startswith("OK"):
+                console.print("  [green]✓ Brazo: movimiento completado[/green]")
+            elif respuesta.startswith("ERR"):
+                console.print(f"  [red]✗ Brazo: {respuesta}[/red]")
+            else:
+                console.print("  [yellow]⚠ Brazo: sin confirmación (timeout)[/yellow]")
+
+    def _animar_brazo(
+        self,
+        servos_desde: AngulosServo,
+        servos_hasta: AngulosServo,
+        esperar_arduino: bool,
+    ) -> str:
+        """
+        Anima la tabla de ángulos en tiempo real, simulando el recorrido del
+        brazo según los tiempos del sketch (MS_POR_PASO + PAUSA_AGARRE).
+        Si esperar_arduino=True, también escucha el puerto serie y termina
+        cuando llega "OK"/"ERR". Devuelve la respuesta del Arduino o "".
+        """
+        PARKED = (ARDUINO_PARKED_BASE, ARDUINO_PARKED_BRAZO1, ARDUINO_PARKED_BRAZO2)
+        ms_paso = ARDUINO_MS_POR_PASO / 1000.0
+        pausa = ARDUINO_PAUSA_AGARRE_MS / 1000.0
+
+        desde_t = (servos_desde.base, servos_desde.brazo1, servos_desde.brazo2)
+        hasta_t = (servos_hasta.base, servos_hasta.brazo1, servos_hasta.brazo2)
+
+        def duracion(a: tuple, b: tuple) -> float:
+            return max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2])) * ms_paso
+
+        # (etiqueta, ángulos_inicio, ángulos_fin, duración_seg, pinza_estado)
+        fases = [
+            ("Yendo a recoger", PARKED, desde_t, duracion(PARKED, desde_t), "abierta"),
+            ("Agarrando pieza", desde_t, desde_t, pausa, f"cerrando ({PINZA_CERRADA:.0f}°)"),
+            ("Yendo a soltar", desde_t, hasta_t, duracion(desde_t, hasta_t), "cerrada"),
+            ("Soltando pieza", hasta_t, hasta_t, pausa, f"abriendo ({PINZA_ABIERTA:.0f}°)"),
+            ("Volviendo a parked", hasta_t, PARKED, duracion(hasta_t, PARKED), "abierta"),
+        ]
+        duracion_total = sum(f[3] for f in fases) + 0.2
+
+        def angulos_en(t: float):
+            acum = 0.0
+            for label, ai, af, d, pinza in fases:
+                if t < acum + d:
+                    p = (t - acum) / d if d > 0 else 1.0
+                    p = min(max(p, 0.0), 1.0)
+                    return (
+                        (ai[0] + (af[0] - ai[0]) * p,
+                         ai[1] + (af[1] - ai[1]) * p,
+                         ai[2] + (af[2] - ai[2]) * p),
+                        label, pinza, p,
+                    )
+                acum += d
+            return PARKED, "Completado", f"cerrada ({PINZA_CERRADA:.0f}°)", 1.0
+
+        def render(angulos, fase, pinza, progreso, terminado=False):
+            tabla = Table(
+                border_style="green" if terminado else "cyan",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            tabla.add_column("Fase", justify="left")
+            tabla.add_column("Servo Base", justify="right")
+            tabla.add_column("Servo Brazo 1", justify="right")
+            tabla.add_column("Servo Brazo 2", justify="right")
+            tabla.add_column("Pinza", justify="center")
+            barra = "█" * int(progreso * 10) + "░" * (10 - int(progreso * 10))
+            etiqueta = f"{barra} {fase}"
+            tabla.add_row(
+                etiqueta,
+                f"{angulos[0]:6.1f}°",
+                f"{angulos[1]:6.1f}°",
+                f"{angulos[2]:6.1f}°",
+                pinza,
+            )
+            return tabla
+
+        respuesta = ""
+        inicio = time.monotonic()
+        timeout_total = max(duracion_total + 5.0, 30.0)  # margen por si el Arduino tarda
+
+        with Live(
+            render(PARKED, "Iniciando...", "—", 0.0),
+            console=console,
+            refresh_per_second=20,
+            transient=False,
+        ) as live:
+            while True:
+                elapsed = time.monotonic() - inicio
+                ang, fase, pinza, prog = angulos_en(elapsed)
+                live.update(render(ang, fase, pinza, prog))
+
+                if esperar_arduino:
+                    linea = self._arduino.leer_respuesta_no_bloqueante()
+                    if linea and (linea.startswith("OK") or linea.startswith("ERR")):
+                        respuesta = linea
+                        break
+                    if elapsed > timeout_total:
+                        break
+                else:
+                    if elapsed >= duracion_total:
+                        break
+
+                time.sleep(0.05)
+
+            # Estado final ya fijo
+            live.update(render(PARKED, "Completado", f"cerrada ({PINZA_CERRADA:.0f}°)", 1.0, terminado=True))
+
+        return respuesta
+
+    def _calcular_servos(self, casilla: str) -> AngulosServo:
+        coord = self._sistema_brazo.casilla_a_xyz(casilla)
+        if not self._sistema_brazo.es_alcanzable(coord.x, coord.y, coord.z):
+            raise ValueError(f"casilla {casilla} fuera de alcance ({coord.x:.1f},{coord.y:.1f})cm")
+        angulos = self._sistema_brazo.calcular_angulos(coord.x, coord.y, coord.z)
+        return self._sistema_brazo.angulos_a_servos(angulos)
+
     # ── Turno PC ─────────────────────────────
 
     def _turno_pc(self):
@@ -880,16 +1088,7 @@ class JuegoAjedrez:
         self.ultimo_mov_pc = f"{desde_str} → {hasta_str}"
         self.ultimo_mov_pc_casillas = {mov.desde, mov.hasta}
 
-        # Coordenadas para el brazo robótico
-        try:
-            c_desde = self._tablero_robot.casilla_a_xy(desde_str)
-            c_hasta = self._tablero_robot.casilla_a_xy(hasta_str)
-            console.print(
-                f"  [dim]Brazo: {desde_str}({c_desde.x:.1f},{c_desde.y:.1f})cm "
-                f"→ {hasta_str}({c_hasta.x:.1f},{c_hasta.y:.1f})cm[/dim]"
-            )
-        except Exception:
-            pass
+        self._emitir_movimiento_brazo(desde_str, hasta_str, autor="PC")
 
         self.estado = aplicar_movimiento(self.estado, mov)
 
@@ -1001,19 +1200,10 @@ class JuegoAjedrez:
         desde_str = indices_a_casilla(*origen)
         hasta_str = indices_a_casilla(*destino)
 
-        # Coordenadas para el brazo robótico
-        try:
-            c_desde = self._tablero_robot.casilla_a_xy(desde_str)
-            c_hasta = self._tablero_robot.casilla_a_xy(hasta_str)
-            console.print(
-                f"  [dim]Brazo: {desde_str}({c_desde.x:.1f},{c_desde.y:.1f})cm "
-                f"→ {hasta_str}({c_hasta.x:.1f},{c_hasta.y:.1f})cm[/dim]"
-            )
-        except Exception:
-            pass
-
+        # No movemos el brazo en la jugada del jugador — el jugador mueve la pieza
+        # físicamente. El brazo solo trabaja en el turno de la PC.
         self.estado = aplicar_movimiento(self.estado, mov)
-        console.print(f"  [green]✓ {desde_str} → {hasta_str}[/green]")
+        console.print(f"  [green]✓ {desde_str} → {hasta_str}[/green]  [dim](movelo en el tablero físico)[/dim]")
         return True
 
     # ── Fin de partida ────────────────────────

@@ -9,12 +9,16 @@ from brazo_robotico.config import (
     PREFERENCIA_CODO,
     SERVO_BASE_OFFSET,
     SERVO_BASE_SIGNO,
+    SERVO_BASE_MIN,
+    SERVO_BASE_MAX,
     SERVO_BRAZO1_OFFSET,
     SERVO_BRAZO1_SIGNO,
+    SERVO_BRAZO1_MIN,
+    SERVO_BRAZO1_MAX,
     SERVO_BRAZO2_OFFSET,
     SERVO_BRAZO2_SIGNO,
-    SERVO_MIN,
-    SERVO_MAX,
+    SERVO_BRAZO2_MIN,
+    SERVO_BRAZO2_MAX,
 )
 
 class SistemaBrazo:
@@ -53,11 +57,21 @@ class SistemaBrazo:
 
     def angulos_a_servos(self, angulos: Angulos) -> AngulosServo:
         return AngulosServo(
-            base=self._convertir_a_servo(angulos.theta_rot, SERVO_BASE_OFFSET, SERVO_BASE_SIGNO),
-            brazo1=self._convertir_a_servo(angulos.theta1, SERVO_BRAZO1_OFFSET, SERVO_BRAZO1_SIGNO),
-            brazo2=self._convertir_a_servo(abs(angulos.theta2), SERVO_BRAZO2_OFFSET, SERVO_BRAZO2_SIGNO),
+            base=self._convertir_a_servo(
+                angulos.theta_rot, SERVO_BASE_OFFSET, SERVO_BASE_SIGNO,
+                SERVO_BASE_MIN, SERVO_BASE_MAX,
+            ),
+            brazo1=self._convertir_a_servo(
+                angulos.theta1, SERVO_BRAZO1_OFFSET, SERVO_BRAZO1_SIGNO,
+                SERVO_BRAZO1_MIN, SERVO_BRAZO1_MAX,
+            ),
+            brazo2=self._convertir_a_servo(
+                abs(angulos.theta2), SERVO_BRAZO2_OFFSET, SERVO_BRAZO2_SIGNO,
+                SERVO_BRAZO2_MIN, SERVO_BRAZO2_MAX,
+            ),
         )
 
-    def _convertir_a_servo(self, angulo: float, offset: float, signo: float) -> float:
+    def _convertir_a_servo(self, angulo: float, offset: float, signo: float,
+                            servo_min: float, servo_max: float) -> float:
         angulo_servo = offset + (signo * angulo)
-        return max(SERVO_MIN, min(SERVO_MAX, angulo_servo))
+        return max(servo_min, min(servo_max, angulo_servo))

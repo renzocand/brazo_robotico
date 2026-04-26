@@ -14,6 +14,7 @@ class Angulos:
 
 @dataclass
 class AngulosServo:
-    base: float
-    brazo1: float
-    brazo2: float
+    base: float       # servo 1 — rotación de la base
+    brazo1: float     # servo 2 — codo
+    brazo2: float     # servo 3 — muñeca
+    pinza: float = 0.0  # servo 4 — 0 = abre, 60 = cierra
