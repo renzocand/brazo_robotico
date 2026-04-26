@@ -3,14 +3,17 @@
 Sistema completo para jugar ajedrez **contra un brazo robótico real**.
 La PC piensa la jugada con un algoritmo Alpha-Beta, calcula la cinemática
 inversa para los servos del brazo, y le envía los ángulos al Arduino por
-USB. El Arduino mueve los servos suavemente para recoger y soltar la pieza.
+USB. El Arduino mueve los servos suavemente, recoge la pieza con la pinza,
+la suelta en la casilla destino y vuelve a una posición "plegada" para
+liberar el tablero. **Solo se mueve para las jugadas de la PC** — vos movés
+tus piezas a mano y le decís al programa qué jugaste.
 
 ```
    ┌─────────────────────┐   USB    ┌─────────────────┐    PWM    ┌────────┐
    │  PC (Python)        │ ──────►  │  Arduino Uno    │ ────────► │ Servos │
-   │  • Ajedrez α-β      │ Serial   │  • Recibe CSV   │  D9/10/11 │  3×    │
+   │  • Ajedrez α-β      │ Serial   │  • Recibe CSV   │ D3/6/10/11│  4×    │
    │  • Cinemática inv.  │ ◄──────  │  • Mueve servos │           └────────┘
-   │  • Ángulos servo    │   "OK"   │  • Confirma     │
+   │  • Animación CLI    │   "OK"   │  • Confirma     │
    └─────────────────────┘          └─────────────────┘
 ```
 
@@ -24,7 +27,7 @@ USB. El Arduino mueve los servos suavemente para recoger y soltar la pieza.
 4. [Cableado del Arduino](#4-cableado-del-arduino)
 5. [Cargar el sketch en el Arduino](#5-cargar-el-sketch-en-el-arduino)
 6. [Configurar Python para que hable con el Arduino](#6-configurar-python-para-que-hable-con-el-arduino)
-7. [Calibración del brazo](#7-calibración-del-brazo)
+7. [Calibración del brazo (medir L1, L2, H)](#7-calibración-del-brazo-medir-l1-l2-h)
 8. [Cómo se juega](#8-cómo-se-juega)
 9. [Modo simulación (sin Arduino)](#9-modo-simulación-sin-arduino)
 10. [Solución de problemas](#10-solución-de-problemas)
@@ -42,10 +45,13 @@ USB. El Arduino mueve los servos suavemente para recoger y soltar la pieza.
 ### Hardware
 - **Arduino Uno** (original o clon)
 - **Cable USB tipo A↔B** (el cable "de impresora")
-- **3 servomotores** (uno por articulación: base, brazo 1, brazo 2)
-- **Fuente externa 5V/2A** o **pack de 4 pilas AA** (para alimentar los servos)
+- **4 servomotores**: base, hombro, codo y pinza
+- **Fuente externa 5V/2A** o **pack de 4 pilas AA** (ver §4)
 - Cables jumper macho-macho y macho-hembra
-- Protoboard (recomendado)
+- Protoboard (recomendado, casi obligatorio)
+- Capacitor electrolítico 470–1000 µF (recomendado)
+
+> Este proyecto está calibrado para el kit MDF **RIO-ONLINE** (estilo EEZYbotARM con varillas paralelas, 4 micro-servos SG90). Si tu brazo es distinto, las medidas en `config.py` van a cambiar pero el sistema funciona igual.
 
 ---
 
@@ -78,13 +84,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Esto instala: `rich`, `pytest`, `matplotlib`, `PyQt5` y **`pyserial`** (que es lo que usa Python para hablarle al Arduino).
+Esto instala: `rich`, `pytest`, `matplotlib`, `PyQt5` y **`pyserial`** (para hablar con el Arduino).
 
 ### 2.4 Instalar el Arduino IDE
 
-Descargar el instalador de https://www.arduino.cc/en/software y ejecutarlo. En la primera ejecución acepta cuando te pida instalar drivers.
+Descargar de https://www.arduino.cc/en/software y ejecutar el instalador. En la primera ejecución acepta los drivers.
 
-> **Si tu Arduino es clon** (chip CH340 en vez de ATmega16U2): también instalá el driver CH340 desde https://sparks.gogo.co.nz/ch340.html. Si no, Windows no lo va a reconocer.
+> **Si tu Arduino es clon** (chip CH340 en vez de ATmega16U2): instalá también el driver CH340 desde https://sparks.gogo.co.nz/ch340.html. Si no, Windows no lo va a reconocer.
 
 ---
 
@@ -93,94 +99,98 @@ Descargar el instalador de https://www.arduino.cc/en/software y ejecutarlo. En l
 | Cantidad | Componente | Notas |
 |---:|---|---|
 | 1 | Arduino Uno | original o clon |
-| 1 | Cable USB A-B | cable "de impresora" |
-| 3 | Servomotor | SG90 (chico, ~1.8 kg·cm) o MG996R (más fuerte, ~10 kg·cm) |
-| 1 | Fuente 5V 2A | o portapilas 4×AA con interruptor |
-| 1 | Protoboard | opcional pero recomendado |
+| 1 | Cable USB A-B | "de impresora" |
+| 4 | Servomotor SG90 | uno por articulación: base, hombro, codo, pinza |
+| 1 | Fuente 5V 2A | o portapilas 4×AA con interruptor (≈6V) |
+| 1 | Protoboard | casi obligatorio para repartir alimentación |
+| 1 | Capacitor 1000 µF (electrolítico) | suaviza picos de corriente |
 | ~10 | Jumpers M-M y M-H | |
-| 1 | (opcional) Servo extra | para una pinza/garra |
 
-> **¿Por qué fuente externa?** El pin 5V del Arduino solo puede entregar ~500 mA. Tres servos en movimiento pueden pedir 1.5–3 A pico y queman el regulador del Arduino. **Siempre fuente externa para los servos.**
+> **¿Por qué fuente externa?** El pin 5V del Arduino solo puede entregar ~500 mA. **4 servos en movimiento pueden pedir 2–3 A en picos** y queman el regulador del Arduino. **SIEMPRE fuente externa para los servos.**
 
 ---
 
 ## 4. Cableado del Arduino
 
-### 4.1 Conexión por servo
+### 4.1 Pines de señal (cable amarillo/naranja de cada servo)
+
+| Servo | Articulación | Pin Arduino |
+|---|---|:-:|
+| Servo 1 | **Base** (rotación horizontal) | **D3** |
+| Servo 2 | **Hombro** / brazo1 (sube y baja) | **D6** |
+| Servo 3 | **Codo** / brazo2 / muñeca | **D10** |
+| Servo 4 | **Pinza** (0=abre, 60=cierra) | **D11** |
+
+### 4.2 Conexión por servo
 
 Cada servo tiene 3 cables:
 
 | Color cable | Va a |
 |---|---|
 | **Rojo** (V+) | **+5V de la fuente externa** (NO al 5V del Arduino) |
-| **Marrón / Negro** (GND) | **GND de la fuente externa** *y* **GND del Arduino** (común) |
-| **Naranja / Amarillo** (señal) | Pin digital PWM del Arduino |
+| **Marrón / negro** (GND) | **GND de la fuente externa** *Y* **GND del Arduino** (común) |
+| **Naranja / amarillo** (señal) | Pin digital del Arduino (según tabla anterior) |
 
-### 4.2 Pines de señal por defecto
-
-| Articulación | Pin Arduino |
-|---|---|
-| Servo Base | **D9** |
-| Servo Brazo 1 (hombro) | **D10** |
-| Servo Brazo 2 (codo) | **D11** |
-| (Opcional) Pinza | D6 |
-
-### 4.3 Esquema simplificado
+### 4.3 Esquema completo
 
 ```
-    Fuente 5V externa
-       +    -
-       │    │
-       │    └────────────┬─────────────────┐
-       │                 │                 │
-       │             [GND Arduino]    [GND fuente]   ← MISMO GND
-       │
-       ├──[V+ Servo Base]──┐
-       ├──[V+ Servo Brazo1]┤   los V+ de los 3 servos van a la fuente
-       └──[V+ Servo Brazo2]┘
+                                      ┌──── Servo Base    (V+)  → D3 señal
+   Fuente externa +5V ────────────────┼──── Servo Hombro  (V+)  → D6 señal
+                                      ├──── Servo Codo    (V+)  → D10 señal
+                                      └──── Servo Pinza   (V+)  → D11 señal
 
-    Arduino Uno
-    ─ D9  ──► señal Servo Base
-    ─ D10 ──► señal Servo Brazo 1
-    ─ D11 ──► señal Servo Brazo 2
-    ─ GND ──► GND fuente externa  (¡crítico!)
-    ─ USB ──► PC
+                                      ┌──── Servo Base    (GND)
+   Fuente externa GND ──────┬─────────┼──── Servo Hombro  (GND)
+                            │         ├──── Servo Codo    (GND)
+                            │         └──── Servo Pinza   (GND)
+                            │
+                            └─────────► GND del Arduino   ← ¡CRÍTICO! GND COMÚN
+
+                            Capacitor 1000 µF entre +5V y GND
+                            (opcional pero recomendado)
 ```
 
-> **Regla de oro:** GND del Arduino, GND de la fuente externa y GND de los servos **deben estar todos unidos**. Si no, los servos hacen movimientos erráticos o no se mueven.
+> ⚠ **Regla de oro #1:** GND del Arduino, GND de la fuente externa y GND de los servos **deben estar todos unidos**. Sin GND común los servos hacen movimientos erráticos o no se mueven, y se pueden quemar.
+>
+> ⚠ **Regla de oro #2:** Voltaje 4.8 a 6V. **NO uses 9V ni 12V** o quemás los servos al instante.
+
+### 4.4 Capacitor (recomendado)
+
+Cuando los servos arrancan a moverse, chupan corriente de golpe → la tensión cae → el Arduino se resetea o los servos tiemblan. Un capacitor electrolítico de **470–1000 µF** entre los rieles + y − del protoboard, lo más cerca posible de los servos, amortigua esos picos.
+
+> **Ojo con la polaridad** del capacitor: el cable largo es el +, el corto es el GND.
 
 ---
 
 ## 5. Cargar el sketch en el Arduino
 
-### 5.1 Abrir el sketch
+### 5.1 Abrir el sketch principal
 
-1. Abrí el **Arduino IDE**
-2. `Archivo → Abrir...` y elegí:
+1. Arduino IDE → `Archivo → Abrir...` → elegí:
    ```
    <carpeta del proyecto>/arduino/brazo_robotico/brazo_robotico.ino
    ```
 
 ### 5.2 Seleccionar la placa y el puerto
 
-3. `Herramientas → Placa → Arduino AVR Boards → Arduino Uno`
-4. Conectá el Arduino al USB
-5. `Herramientas → Puerto → COMx` (Windows) o `/dev/ttyACM0` (Linux). **Anotá ese nombre**, te hace falta más adelante.
+2. `Herramientas → Placa → Arduino AVR Boards → Arduino Uno`
+3. Conectá el Arduino al USB
+4. `Herramientas → Puerto → COMx` (Windows) o `/dev/ttyACM0` (Linux). **Anotá el COM** que aparece, te hace falta en §6.
 
 ### 5.3 Compilar y subir
 
-6. Tocá el botón **→ (Subir)** (o `Ctrl+U`).
-7. Esperá a que diga "Carga finalizada" abajo.
+5. Tocá el botón **flecha (→)** en la barra superior (o `Ctrl+U`)
+6. Esperá a que diga `Carga finalizada` abajo
 
 ### 5.4 Verificar que arrancó
 
-8. Abrí el **Monitor Serie** (`Herramientas → Monitor Serie` o `Ctrl+Shift+M`)
-9. Configurá la velocidad a **9600 baudios** abajo a la derecha
-10. Presioná el botón de RESET del Arduino: deberías ver `READY`
-11. Escribí en la barra de arriba: `PING` y enviá → debería responder `PONG`
-12. Escribí: `90,90,90|90,90,90` → los servos van a 90° y luego responde `OK`
+7. Abrí el **Monitor Serie** (`Herramientas → Monitor Serie` o `Ctrl+Shift+M`)
+8. Configurá la velocidad a **9600 baudios** abajo a la derecha
+9. Apretá el botón RESET del Arduino → tendría que decir `READY`
+10. Tipeá `PING` y enviá → debería responder `PONG`
+11. Tipeá `90,90,90|90,90,90` → los servos van a 90° y responde `OK`
 
-> Si el monitor serie está abierto, **el Python no va a poder usar el puerto** (solo un programa a la vez). Cerralo antes de ejecutar el juego.
+> **Importante**: cerrá el Monitor Serie antes de correr Python. **Solo un programa a la vez** puede usar el puerto serie.
 
 ---
 
@@ -188,117 +198,182 @@ Cada servo tiene 3 cables:
 
 ### 6.1 Editar `brazo_robotico/config.py`
 
-Buscá la sección **CONEXIÓN ARDUINO** y cambiá:
+Buscá la sección **CONEXIÓN ARDUINO**:
 
 ```python
-ARDUINO_PUERTO = "COM3"        # ← reemplazá por el puerto real de tu Arduino
+ARDUINO_PUERTO = "COM4"        # ← reemplazá por el COM de tu Arduino
 ARDUINO_BAUDIOS = 9600         # debe coincidir con BAUDIOS del sketch
-ARDUINO_HABILITADO = True      # ← cambiá a True para enviar al brazo real
+ARDUINO_HABILITADO = True      # True = enviar al brazo real
 ```
 
-> **Tip:** Si dejás `ARDUINO_PUERTO = None` y `ARDUINO_HABILITADO = True`, el programa intenta detectar el puerto automáticamente.
+> Si dejás `ARDUINO_PUERTO = None` y `ARDUINO_HABILITADO = True`, el programa intenta detectar el puerto automáticamente.
 
-### 6.2 Probar la conexión rápida
+### 6.2 Probar la conexión
 
-Con el Arduino conectado y el monitor serie del IDE **cerrado**:
+Con el Arduino conectado y el Monitor Serie del IDE **cerrado**:
 
 ```bash
 python -c "from brazo_robotico.arduino_link import ArduinoLink; \
-l = ArduinoLink('COM3'); l.conectar(); print('PING:', l.ping()); l.cerrar()"
+l = ArduinoLink('COM4'); l.conectar(); print('PING:', l.ping()); l.cerrar()"
 ```
 
-Debería imprimir `PING: True`. Si dice `False` o tira error → ver [§10](#10-solución-de-problemas).
+Tendría que imprimir `PING: True`. Si dice `False` o tira error → ver §10.
 
 ---
 
-## 7. Calibración del brazo
+## 7. Calibración del brazo (medir L1, L2, H)
 
-Las medidas y offsets viven en `brazo_robotico/config.py`. Tenés que ajustarlos a **tu** brazo real:
+El cálculo de cinemática necesita las **medidas físicas reales** de tu brazo. Con valores incorrectos, **muchas casillas distintas terminan dando los mismos ángulos** → el brazo no se mueve a la posición correcta.
 
-```python
-# Tamaño físico
-DIAMETRO_CASILLA = 3.0          # cm — lado de cada cuadro del tablero
-LARGO_PRIMER_BRAZO = 23.0       # cm — del hombro al codo
-LARGO_SEGUNDO_BRAZO = 19.0      # cm — del codo a la punta
-OFFSET_BRAZO = 10.0             # cm — base del brazo al borde más cercano del tablero
+### 7.1 Subir el sketch de calibración
 
-# Conversión ángulo matemático → ángulo real del servo
-# (ajustar según cómo esté montado cada servo en tu brazo)
-SERVO_BASE_OFFSET = 0.0;    SERVO_BASE_SIGNO = 1.0
-SERVO_BRAZO1_OFFSET = 90.0; SERVO_BRAZO1_SIGNO = 1.0
-SERVO_BRAZO2_OFFSET = 0.0;  SERVO_BRAZO2_SIGNO = 1.0
+Hay un sketch separado que **estira el brazo a 170°** para que puedas medir cómodo:
+
+1. En el IDE de Arduino, `Archivo → Abrir...`:
+   ```
+   arduino/brazo_robotico/calibracion_servo/calibracion_servo.ino
+   ```
+2. Subilo (botón →)
+3. El brazo se va a estirar suavemente
+
+### 7.2 Medir con regla
+
+Con el brazo extendido y la pinza cerrada:
+
+```
+     ●  punta de la pinza cerrada
+     │
+     │ L2 = del eje de la MUÑECA (codo) a la PUNTA DE LA PINZA
+     │
+     ●  eje de la muñeca / codo (servo)
+     │
+     │ L1 = del eje del HOMBRO al eje de la MUÑECA
+     │
+     ●  eje del hombro (servo)
+     │
+     │ H = del eje del HOMBRO al PLANO del tablero
+     │
+   ──┴── tablero
 ```
 
-### Procedimiento sugerido
+| Medida | Qué es | Ejemplo |
+|---|---|---|
+| **L1** | del eje del hombro al eje del codo | 15 cm |
+| **L2** | del eje del codo a la punta de la pinza cerrada | 15.9 cm |
+| **H** | altura del eje del hombro al plano del tablero | (a medir según tu mesa) |
+| **OFFSET** | de la base del brazo al borde más cercano del tablero | 5 cm |
 
-1. Con el brazo armado y los servos atornillados en posición media (~90°), corré:
-   ```bash
-   python main.py
-   ```
-2. Hacé un movimiento con piezas en casillas conocidas (ej. `D2-D4`).
-3. Mirá la tabla "Brazo robótico" que muestra el programa: te dice los servos para cada paso.
-4. Si el brazo apunta al lado equivocado, **invertí el `SIGNO`** (poné `-1.0`).
-5. Si está corrido en una articulación, ajustá el `OFFSET` correspondiente.
-6. Si una casilla del tablero da "fuera de alcance": revisá `LARGO_PRIMER_BRAZO + LARGO_SEGUNDO_BRAZO ≥ OFFSET_BRAZO + alto_tablero`.
+### 7.3 Cargar las medidas en `config.py`
+
+```python
+LARGO_PRIMER_BRAZO = 15.0      # tu L1 medido
+LARGO_SEGUNDO_BRAZO = 15.9     # tu L2 medido
+OFFSET_BRAZO = 5.0             # distancia base → tablero
+DIAMETRO_CASILLA = 2.5         # lado de cada casilla (en cm)
+```
+
+### 7.4 Verificar alcance
+
+Para que las 64 casillas estén alcanzables tiene que cumplirse:
+
+```
+L1 + L2  ≥  √(OFFSET² + (8 × DIAMETRO_CASILLA)²)
+```
+
+Ejemplo con los valores actuales:
+- Alcance del brazo: 15 + 15.9 = 30.9 cm
+- Distancia a casilla más lejana: √(5² + 20²) ≈ 20.6 cm ✓
+
+### 7.5 Volver al sketch principal
+
+Cuando termines de medir, **volvé a subir** `arduino/brazo_robotico/brazo_robotico.ino` (no el de calibración) para usar el juego.
+
+### 7.6 Calibrar la dirección de los servos (si es necesario)
+
+Si al jugar ves que el brazo va al **lado opuesto**, en `config.py`:
+
+```python
+SERVO_BASE_SIGNO = 1.0     # poné -1.0 si la base gira al revés
+SERVO_BRAZO1_SIGNO = 1.0   # poné -1.0 si el hombro sube cuando debería bajar
+SERVO_BRAZO2_SIGNO = 1.0   # idem para el codo
+```
+
+Y los `OFFSET` ajustan dónde queda el "centro" de cada servo (típicamente 90° = posición media).
 
 ---
 
 ## 8. Cómo se juega
 
+### 8.1 Arrancar el juego
+
 ```bash
 python main.py
 ```
 
-### Flujo de una partida
+### 8.2 Flujo de una partida
 
 1. **Pantalla de bienvenida** — elegí dificultad:
-   - `1` Fácil (PC ve 2 jugadas)
+   - `1` Fácil (PC ve 2 jugadas adelante)
    - `2` Intermedio (PC ve 3 jugadas)
    - `3` Difícil (PC ve 4 jugadas)
-2. **Conexión Arduino** — si está habilitado, ves `✓ Arduino conectado en COMx`. Si falla, sigue en modo simulación.
-3. **Las Blancas (PC) abren** — la PC piensa, mueve la pieza física, espera confirmación del Arduino, te muestra qué jugó.
-4. **Tu turno (Negras)** — tipeá tu jugada:
+2. **Conexión Arduino** — ves `✓ Arduino conectado en COMx` si todo está bien.
+3. **Las Blancas (PC) abren** — la PC piensa, calcula los ángulos, **el brazo agarra la pieza física, la mueve y la suelta**, vuelve a parked.
+4. **Tu turno (Negras)** — vos movés tu pieza FÍSICAMENTE en el tablero, y luego tipeás qué jugaste:
    - `E7-E5` → mover directo
    - `E7` → solo la casilla → te muestra todas las jugadas legales de esa pieza
    - `AYUDA` → pantalla de ayuda
    - `SALIR` → terminar
-5. **Cada movimiento muestra:**
-   ```
-           Brazo robótico — PC: E2 → E4
-   ┌─────────┬─────────┬─────────────┬──────────────┬──────────────┐
-   │  Paso   │ Casilla │ Servo Base  │ Servo Brazo 1│ Servo Brazo 2│
-   ├─────────┼─────────┼─────────────┼──────────────┼──────────────┤
-   │ Recoger │   E2    │       93.4° │       112.5° │        48.2° │
-   │ Soltar  │   E4    │       92.1° │       101.8° │        62.7° │
-   └─────────┴─────────┴─────────────┴──────────────┴──────────────┘
-     → Arduino: 93.4,112.5,48.2|92.1,101.8,62.7
-     ⠋ Brazo en movimiento...
-     ✓ Brazo: movimiento completado
-   ```
-6. **Fin de partida** — jaque mate, ahogado, regla de 50 movimientos o material insuficiente.
+5. **El brazo solo se mueve cuando juega la PC**, no cuando jugás vos. Tu jugada se registra y listo.
+6. **Animación en vivo** durante cada jugada de la PC:
 
-### Reglas implementadas
+```
+  Brazo robótico — PC: E2 → E4
+  → Arduino: 95.3,142.5,128.1|92.1,156.8,143.7
+┌────────────────────────────┬────────────┬───────────────┬───────────────┬───────────────┐
+│ Fase                       │ Servo Base │ Servo Brazo 1 │ Servo Brazo 2 │     Pinza     │
+├────────────────────────────┼────────────┼───────────────┼───────────────┼───────────────┤
+│ ████░░░░░░ Yendo a recoger │      94.5° │        128.3° │        110.2° │   abierta     │
+└────────────────────────────┴────────────┴───────────────┴───────────────┴───────────────┘
+```
 
-✅ Movimientos básicos de todas las piezas
-✅ Enroque corto y largo (con validación de jaque)
-✅ Captura al paso (en passant)
-✅ Promoción de peón
-✅ Detección de jaque, jaque mate y ahogado
-✅ Regla de los 50 movimientos
-✅ Material insuficiente
+Las fases que vas a ver:
+1. **Yendo a recoger** (parked → casilla origen)
+2. **Agarrando pieza** (cierra pinza, pausa)
+3. **Yendo a soltar** (origen → destino)
+4. **Soltando pieza** (abre pinza, pausa)
+5. **Volviendo a parked** (libera el tablero)
+6. **Completado** ✓
+
+### 8.3 La posición "parked"
+
+Después de cada jugada, el brazo vuelve a **(base=90°, hombro=90°, codo=90°, pinza=cerrada)**. Esto deja el tablero libre para que vos puedas mover tu pieza tranquilo.
+
+Para cambiar la posición parked, editá las constantes `PARKED_*` al principio del sketch [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino) y resubí.
+
+> ⚠ **Nunca pongas PARKED en 0° o 180°** — son los topes mecánicos. Si la articulación no llega exactamente, el servo se queda forzando contra el tope y **se quema** en minutos.
+
+### 8.4 Reglas de ajedrez implementadas
+
+- ✅ Movimientos básicos de todas las piezas
+- ✅ Enroque corto y largo (con validación de jaque)
+- ✅ Captura al paso (en passant)
+- ✅ Promoción de peón
+- ✅ Detección de jaque, jaque mate y ahogado
+- ✅ Regla de los 50 movimientos
+- ✅ Material insuficiente
 
 ---
 
 ## 9. Modo simulación (sin Arduino)
 
-Si todavía no terminaste de armar el brazo o querés probar el algoritmo sin conectar nada:
+Si todavía no terminaste de armar el brazo, o querés probar el algoritmo sin el hardware:
 
 En `brazo_robotico/config.py`:
 ```python
 ARDUINO_HABILITADO = False
 ```
 
-El juego corre normal y muestra todos los ángulos por pantalla, pero no manda nada al puerto serie. Útil para:
+El juego corre normal y muestra la animación en pantalla, pero no manda nada al puerto serie. Útil para:
 - Probar la lógica del juego
 - Ver qué ángulos saldrían antes de tener el hardware
 - Calibrar los offsets en una hoja de cálculo
@@ -315,10 +390,18 @@ El alias de la Microsoft Store está interceptando `python`. Soluciones:
 
 ### `venv\Scripts\activate : la ejecución de scripts está deshabilitada`
 
-Permitir scripts firmados localmente para tu usuario:
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
+
+### "Acceso denegado" al subir el sketch desde el IDE
+
+El puerto COM está ocupado por otro programa. Cerrá:
+- El Monitor Serie del IDE
+- Cualquier `python main.py` corriendo
+- Otras instancias del IDE
+
+Si nada funciona, desconectá y reconectá el USB.
 
 ### Arduino no aparece como puerto
 
@@ -330,38 +413,73 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ### "Modo simulación" cuando esperabas el Arduino conectado
 
 1. Verificá que `ARDUINO_HABILITADO = True` en `config.py`
-2. Verificá que `ARDUINO_PUERTO` tenga el puerto correcto (o sea `None` para autodetección)
-3. Cerrá el **Monitor Serie del IDE** — el puerto solo lo puede usar un programa a la vez
+2. Verificá que `ARDUINO_PUERTO` tenga el COM correcto (o sea `None` para autodetección)
+3. Cerrá el Monitor Serie del IDE
 4. Probá `python -c "from brazo_robotico.arduino_link import ArduinoLink; print(ArduinoLink.detectar_puerto())"`
+
+### Servo se quema (humo, olor a plástico)
+
+**Causas más comunes** (por orden de frecuencia):
+
+1. **GND no común** entre Arduino y fuente externa → señal PWM errática → servo stallea
+2. **Servo en posición de tope mecánico** (PARKED en 0° o 180°) → motor forzando continuamente
+3. **Voltaje muy alto** (>6V) → quema instantánea
+4. **Alimentado desde el 5V del Arduino** → sobrecarga el regulador
+
+Antes de conectar el reemplazo, **revisá las 4 causas**. Las reglas:
+- 🚫 Nunca alimentar servos desde el 5V del Arduino
+- 🚫 Nunca voltaje >6V
+- 🚫 Nunca PARKED en 0° o 180° sin verificar tope físico
+- ✅ Siempre GND común entre fuente externa y Arduino
+- ✅ Si oís un servo zumbando o lo sentís caliente, **desconectá YA**
+
+### Servos vibran, tartamudean o se mueven raro
+
+Casi siempre alimentación o GND:
+- ¿GND de la fuente externa unido al GND del Arduino?
+- ¿Pilas viejas? Cambialas o usá fuente de pared
+- ¿La fuente da suficiente corriente? (mínimo 2A para 4 servos)
+- ¿Tenés capacitor cerca de los servos?
 
 ### `ERR angulo fuera de rango`
 
-El cálculo dio un ángulo fuera de 0–180°. Causas comunes:
+El cálculo dio un ángulo fuera del rango permitido (10–170° por defecto). Causas:
 - `SERVO_*_OFFSET` mal calibrado
 - `SERVO_*_SIGNO` invertido (pieza en el lado opuesto)
-- Casilla muy lejos del brazo (revisá `OFFSET_BRAZO`)
+- Casilla muy lejos del brazo (revisá `OFFSET_BRAZO` y las medidas L1/L2)
 
-### Servos vibran o "tartamudean"
+### El brazo se mueve, pero todas las casillas dan los mismos ángulos
 
-Casi siempre es problema de alimentación:
-- ¿Estás alimentando los servos desde el 5V del Arduino? **No lo hagas** — usá fuente externa.
-- ¿GND de la fuente externa unido al GND del Arduino? Tiene que estarlo.
-- Pilas viejas → cambiarlas o usar fuente de pared.
+Probablemente las **medidas L1/L2/OFFSET están mal** (no son las de tu brazo real). El cálculo da ángulos fuera de rango, se clampean al límite y muchas casillas distintas terminan con los mismos ángulos clampeados.
+
+**Solución**: usar el sketch de calibración (`calibracion_servo.ino`) para estirar el brazo y medir con regla. Ver §7.
 
 ### El brazo se mueve muy rápido / muy lento
 
-En el sketch, ajustá:
+En el sketch [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino), ajustá:
+
 ```cpp
-#define MS_POR_PASO 15   // ← más alto = más lento y suave (probá 20-30)
+#define MS_POR_PASO 120     // ms entre cada grado de movimiento
+                            // Más alto = más lento y suave
+                            // 60 = rápido, 120 = actual, 200 = muy lento
+#define PAUSA_AGARRE 2000   // ms de pausa cuando agarra/suelta
+                            // Más alto = pinza tiene más tiempo
 ```
-Recompilá y subí.
+
+Después de cambiar, **también actualizá** `config.py` con los mismos valores en `ARDUINO_MS_POR_PASO` y `ARDUINO_PAUSA_AGARRE_MS` para que la animación de Python siga sincronizada. Y **resubí el sketch**.
 
 ### Casilla "fuera de alcance"
 
-Revisá las medidas físicas en `config.py`. Para que todas las 64 casillas estén alcanzables:
+El brazo no llega físicamente. Comprobá:
+
 ```
-LARGO_PRIMER_BRAZO + LARGO_SEGUNDO_BRAZO  ≥  OFFSET_BRAZO + (8 × DIAMETRO_CASILLA)
+L1 + L2  ≥  √(OFFSET² + (8 × DIAMETRO_CASILLA)²)
 ```
+
+Si no se cumple, opciones:
+- Tablero con casillas más chicas (ajustar `DIAMETRO_CASILLA`)
+- Tablero más cerca de la base (bajar `OFFSET_BRAZO`)
+- Tablero más chico físicamente (no usar las filas/columnas más lejanas)
 
 ---
 
@@ -373,22 +491,26 @@ brazo_robotico/
 ├── main.py                          ← punto de entrada
 ├── requirements.txt                 ← dependencias Python
 ├── README.md                        ← este archivo
+├── test_arduino.py                  ← script de diagnóstico de conexión
+├── test_angulos.py                  ← muestra ángulos calculados por casilla
 │
 ├── brazo_robotico/                  ← módulo principal
-│   ├── ajedrez.py                   ← motor de ajedrez (Alpha-Beta + UI)
+│   ├── ajedrez.py                   ← motor de ajedrez (Alpha-Beta + UI + animación)
 │   ├── arduino_link.py              ← comunicación serial con Arduino
 │   ├── cinematica.py                ← cinemática inversa
-│   ├── config.py                    ← TODA la configuración (ajustá esto)
+│   ├── config.py                    ← TODA la configuración de Python
 │   ├── movimiento.py                ← secuencia de ángulos para mover una pieza
 │   ├── mover_pieza.py               ← script viejo, demo individual
 │   ├── sistema.py                   ← integra cinemática + tablero + servos
 │   ├── tablero.py                   ← geometría del tablero
 │   ├── tipos.py                     ← Coordenada, Angulos, AngulosServo
-│   └── visualizacion.py             ← gráficos 2D/3D con matplotlib
+│   └── visualizacion.py             ← gráficos 2D/3D con matplotlib (no usado en juego)
 │
 ├── arduino/
 │   └── brazo_robotico/
-│       └── brazo_robotico.ino       ← sketch que se sube al Arduino
+│       ├── brazo_robotico.ino       ← sketch principal (usar cuando jugás)
+│       └── calibracion_servo/
+│           └── calibracion_servo.ino  ← sketch para estirar el brazo y medir
 │
 └── tests/                           ← pytest
     ├── test_cinematica.py
@@ -400,11 +522,17 @@ brazo_robotico/
 
 ### Archivos clave por tarea
 
-- **Ajustar tamaño/medidas del brazo** → `brazo_robotico/config.py`
-- **Calibrar servos** → `brazo_robotico/config.py` (offsets/signos) o el sketch (`PIN_*`)
-- **Cambiar pines del Arduino** → `arduino/brazo_robotico/brazo_robotico.ino` (`PIN_BASE`, `PIN_BRAZO1`, `PIN_BRAZO2`)
-- **Cambiar velocidad del brazo** → sketch, `MS_POR_PASO`
-- **Cambiar dificultad de la IA** → al iniciar el programa, o `DIFICULTAD` en `ajedrez.py`
+| Querés... | Editá... |
+|---|---|
+| Cambiar pines del Arduino | [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino) (`PIN_BASE`, `PIN_BRAZO1`, etc.) |
+| Cambiar la posición parked | [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino) (`PARKED_BASE`, etc.) |
+| Cambiar velocidad del brazo | [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino) (`MS_POR_PASO`) Y `config.py` (`ARDUINO_MS_POR_PASO`) |
+| Cambiar pausa de agarre | [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino) (`PAUSA_AGARRE`) Y `config.py` (`ARDUINO_PAUSA_AGARRE_MS`) |
+| Cambiar valores de la pinza | [brazo_robotico.ino](arduino/brazo_robotico/brazo_robotico.ino) Y `config.py` (`PINZA_ABIERTA`, `PINZA_CERRADA`) |
+| Cambiar medidas físicas (L1, L2, OFFSET) | [config.py](brazo_robotico/config.py) |
+| Cambiar tamaño del tablero | [config.py](brazo_robotico/config.py) (`DIAMETRO_CASILLA`) |
+| Calibrar dirección de servos | [config.py](brazo_robotico/config.py) (`SERVO_*_SIGNO` y `SERVO_*_OFFSET`) |
+| Configurar puerto COM | [config.py](brazo_robotico/config.py) (`ARDUINO_PUERTO`) |
 
 ### Tests
 
@@ -416,19 +544,36 @@ pytest tests/test_cinematica.py
 
 ---
 
-## Comandos especiales del Arduino (para debug)
-
-Podés mandarlos desde el Monitor Serie del IDE (a 9600 baudios):
+## Comandos especiales del Arduino (debug desde el Monitor Serie)
 
 | Comando | Qué hace |
 |---|---|
 | `PING` | Responde `PONG` |
-| `HOME` | Manda los servos a 90,90,90 (posición segura) |
-| `90,90,90\|90,90,90` | Movimiento normal — recoger y soltar en la misma posición |
-| `B,B1,B2\|B,B1,B2` | Movimiento real — `B` base, `B1` brazo1, `B2` brazo2 |
+| `HOME` o `PARK` | Manda los servos a la posición parked |
+| `B,B1,B2\|B,B1,B2` | Movimiento real — `B` base, `B1` brazo1 (hombro), `B2` brazo2 (codo) |
+| `90,90,90\|90,90,90` | Test: ir y volver a la misma posición central |
+
+Recordá: hay que cerrar el Monitor Serie antes de correr `python main.py`.
+
+---
+
+## Importante: hay parámetros duplicados entre el sketch y `config.py`
+
+Algunos valores tienen que estar **en ambos archivos** porque el Arduino y Python son programas distintos en máquinas distintas:
+
+| Parámetro | En el sketch (.ino) | En `config.py` |
+|---|---|---|
+| Velocidad del brazo | `MS_POR_PASO` | `ARDUINO_MS_POR_PASO` |
+| Pausa de agarre | `PAUSA_AGARRE` | `ARDUINO_PAUSA_AGARRE_MS` |
+| Posición parked | `PARKED_BASE/BRAZO1/BRAZO2` | `ARDUINO_PARKED_BASE/BRAZO1/BRAZO2` |
+| Valores de pinza | `PINZA_ABIERTA/CERRADA` | `PINZA_ABIERTA/CERRADA` |
+
+Cuando cambiás uno, **acordate de cambiar el otro** o la animación de Python no va a estar sincronizada con el movimiento real.
 
 ---
 
 ## Licencia / Créditos
 
-Proyecto académico. Las piezas-cuadrado (PSTs), el Alpha-Beta y el Quiescence Search del motor están inspirados en el estilo de los motores de ajedrez clásicos tipo Chessmaster (Game Boy, 1989).
+Proyecto académico. El motor de ajedrez (Alpha-Beta + Quiescence Search + Piece-Square Tables) está inspirado en el estilo de los motores clásicos tipo Chessmaster (Game Boy, 1989).
+
+El kit del brazo es **RIO-ONLINE** (estilo EEZYbotARM, MDF cortado a láser, 4 servos SG90).
