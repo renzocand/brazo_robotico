@@ -1,5 +1,6 @@
 # brazo_robotico/tablero.py
 from .tipos import Coordenada
+from .config import INVERTIR_FILAS_TABLERO
 
 class Tablero:
     def __init__(self, filas: int = 8, columnas: int = 8, tamaño_casilla: float = 3.0):
@@ -18,7 +19,11 @@ class Tablero:
     def casilla_a_xy(self, casilla: str) -> Coordenada:
         """
         Convierte una casilla tipo 'A6' a coordenadas (x, y) en cm.
-        Ejemplo: 'A1' -> (0,0), 'C4' -> (6, 9)
+        Ejemplo (sin invertir): 'A1' -> (0,0), 'C4' -> (6, 9)
+
+        Si INVERTIR_FILAS_TABLERO=True, la fila 8 queda CERCA del brazo
+        (y=0) y la fila 1 LEJOS (y máx). Esto se usa cuando el tablero
+        físico está orientado al revés respecto a la convención del código.
         """
         if len(casilla) != 2:
             raise ValueError(f"Casilla inválida: {casilla}")
@@ -30,5 +35,8 @@ class Tablero:
             raise ValueError(f"Casilla inválida: {casilla}")
 
         x = columna * self.tamaño_casilla
-        y = fila * self.tamaño_casilla
+        if INVERTIR_FILAS_TABLERO:
+            y = (self.filas - 1 - fila) * self.tamaño_casilla
+        else:
+            y = fila * self.tamaño_casilla
         return Coordenada(x, y)

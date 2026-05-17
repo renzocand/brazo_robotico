@@ -31,19 +31,23 @@ class ArduinoLink:
         baudios: int = 9600,
         timeout: float = 0.5,
         espera_arranque: float = 2.0,
+        espera_ready: float = 15.0,
     ):
         """
         puerto: 'COM3' (Windows), '/dev/ttyACM0' (Linux), '/dev/cu.usbmodemXXXX' (macOS).
                 Si es None, hay que llamar a `detectar_puerto()` antes de conectar.
         baudios: tiene que coincidir con `BAUDIOS` del sketch (9600 por defecto).
         timeout: segundos máximos esperando una línea de respuesta.
-        espera_arranque: el Arduino se reinicia al abrir el puerto serie; este es
-                el tiempo a esperar antes de mandar el primer comando.
+        espera_arranque: pausa mínima tras abrir el puerto (DTR resetea el Arduino).
+        espera_ready: tiempo máximo total para esperar a recibir 'READY' del sketch.
+                Necesario porque el sketch principal hace una rampa lenta a parked
+                en setup() antes de imprimir READY.
         """
         self.puerto = puerto
         self.baudios = baudios
         self.timeout = timeout
         self.espera_arranque = espera_arranque
+        self.espera_ready = espera_ready
         self._serial = None  # se setea en conectar()
 
     # ── Conexión ──────────────────────────────
@@ -67,8 +71,18 @@ class ArduinoLink:
             baudrate=self.baudios,
             timeout=self.timeout,
         )
-        # El Arduino se reinicia al abrir el puerto (DTR). Esperamos a que arranque.
+        # El Arduino se reinicia al abrir el puerto (DTR). Espera mínima.
         time.sleep(self.espera_arranque)
+
+        # Esperar READY hasta espera_ready segundos. El sketch principal hace
+        # una rampa lenta a parked en setup() antes de imprimir READY, así que
+        # podemos tardar varios segundos.
+        inicio = time.time()
+        while time.time() - inicio < self.espera_ready:
+            linea = self._serial.readline().decode("ascii", errors="replace").strip()
+            if linea == "READY":
+                break
+            # Si llegamos a leer cualquier otra cosa, seguimos esperando READY.
         self._serial.reset_input_buffer()
 
     def cerrar(self) -> None:
@@ -135,6 +149,18 @@ class ArduinoLink:
         self._serial.write(b"HOME\n")
         self._serial.flush()
         return self._esperar_respuesta(timeout_movimiento)
+
+    def enviar_goto(self, servos: AngulosServo, timeout: float = 30.0) -> str:
+        """
+        Manda al brazo a la posición indicada y la mantiene (sin pinza, sin parked).
+        Solo para calibración del tablero. Devuelve "OK" o "ERR ..." del Arduino.
+        """
+        if not self.conectado:
+            raise RuntimeError("Arduino no conectado.")
+        linea = f"GOTO {servos.base:.1f},{servos.brazo1:.1f},{servos.brazo2:.1f}"
+        self._serial.write((linea + "\n").encode("ascii"))
+        self._serial.flush()
+        return self._esperar_respuesta(timeout)
 
     def ping(self) -> bool:
         """Devuelve True si el Arduino responde PONG en menos de 1 segundo."""

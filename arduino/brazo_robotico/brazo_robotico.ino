@@ -39,20 +39,20 @@
 // no puede llegar exactamente, el servo se queda forzando contra el tope y
 // se quema. Usar valores intermedios (10°+ alejados de los extremos).
 // ──────────────────────────────────────────────
-#define PARKED_BASE    90    // base centrada (NUNCA 0 ni 180 sin verificar tope)
-#define PARKED_BRAZO1  90    // codo a media altura
-#define PARKED_BRAZO2  90    // muñeca centrada
+#define PARKED_BASE    90    // base centrada
+#define PARKED_BRAZO1  90    // hombro centrado (rango seguro: 73-147)
+#define PARKED_BRAZO2  73    // muñeca lo menos doblada posible (minimo seguro)
 #define PARKED_PINZA   60    // pinza cerrada
 
-// Límites de seguridad por servo. Margen de 10° de cada extremo para
-// evitar que el servo se quede forzando contra topes mecánicos.
-// Cualquier ángulo fuera de estos rangos se devuelve como ERR.
+// Límites de seguridad por servo. Cualquier ángulo fuera de estos rangos
+// se devuelve como ERR. BRAZO1/BRAZO2 calibrados con calibrar_brazo.ino —
+// se quitaron 5° de margen por seguridad.
 #define BASE_MIN    10
 #define BASE_MAX    170
-#define BRAZO1_MIN  10
-#define BRAZO1_MAX  170
-#define BRAZO2_MIN  10
-#define BRAZO2_MAX  170
+#define BRAZO1_MIN  73
+#define BRAZO1_MAX  150
+#define BRAZO2_MIN  73
+#define BRAZO2_MAX  150
 
 // Velocidad: ms entre cada paso de 1° (mayor = más lento, más suave)
 //   15  = rápido (default original)
@@ -60,6 +60,19 @@
 //   60  = lento y suave
 //   120 = muy lento (actual, da tiempo al servo a estabilizar)
 #define MS_POR_PASO 120
+
+// Velocidad de la rampa inicial al arrancar (PARKED desde posición desconocida).
+// Conviene que sea más lenta que MS_POR_PASO porque el brazo puede arrancar
+// desde cualquier posición física (mayor recorrido = más riesgo de tirón).
+#define MS_POR_PASO_INICIAL 200
+
+// Posición que se ASUME al arrancar el sketch (antes de rampar a PARKED).
+// El servo va a saltar a estos ángulos al recibir su primer pulso PWM, así que
+// elegí valores cercanos a donde sueles dejar el brazo apagado para que el
+// snap inicial sea chico. 90° es el centro y suele ser una apuesta segura.
+#define INICIO_BASE    90
+#define INICIO_BRAZO1  90
+#define INICIO_BRAZO2  90
 
 // Pausa entre fases (recoger -> soltar) en ms.
 // Cuanto más grande, más tiempo tiene la pinza para agarrar/soltar bien.
@@ -82,10 +95,11 @@ Servo servoBrazo2;
 Servo servoPinza;
 #endif
 
-// Estado actual de los servos (se inicializa en setup() con los valores PARKED_*)
-int anguloBase   = PARKED_BASE;
-int anguloBrazo1 = PARKED_BRAZO1;
-int anguloBrazo2 = PARKED_BRAZO2;
+// Estado actual de los servos (se inicializa en setup() con los valores INICIO_*
+// y luego se rampa lento hasta PARKED_*)
+int anguloBase   = INICIO_BASE;
+int anguloBrazo1 = INICIO_BRAZO1;
+int anguloBrazo2 = INICIO_BRAZO2;
 
 // Buffer de entrada
 String buffer = "";
@@ -106,13 +120,19 @@ void setup() {
   servoPinza.write(PARKED_PINZA);
 #endif
 
-  // Posición inicial = parked
+  // Snap inicial a INICIO_*: el servo va a saltar acá la primera vez que reciba
+  // pulsos. Después rampamos LENTO hasta PARKED_* para que la primera salida
+  // a base no sea brusca.
   servoBase.write(anguloBase);
   servoBrazo1.write(anguloBrazo1);
   servoBrazo2.write(anguloBrazo2);
+  delay(800);  // tiempo para que el servo se asiente en INICIO_*
 
   buffer.reserve(64);
-  delay(500);
+
+  // Rampa lenta hasta la posición parked.
+  moverASuave(PARKED_BASE, PARKED_BRAZO1, PARKED_BRAZO2, MS_POR_PASO_INICIAL);
+
   Serial.println("READY");
 }
 
@@ -156,6 +176,25 @@ void procesarLinea(const String& linea) {
   // Comando especial: PING -> diagnóstico
   if (s.equalsIgnoreCase("PING")) {
     Serial.println("PONG");
+    return;
+  }
+
+  // Comando especial: GOTO B,B1,B2 -> ir a la posición y QUEDARSE quieto.
+  // Sin agarre, sin volver a parked. Para calibración del tablero.
+  if (s.startsWith("GOTO ") || s.startsWith("goto ")) {
+    String resto = s.substring(5);
+    resto.trim();
+    int b, br1, br2;
+    if (!parsearTresAngulos(resto, b, br1, br2)) {
+      Serial.println("ERR parseo GOTO");
+      return;
+    }
+    if (!enRangoBase(b) || !enRangoBrazo1(br1) || !enRangoBrazo2(br2)) {
+      Serial.println("ERR angulo fuera de rango");
+      return;
+    }
+    moverA(b, br1, br2);
+    Serial.println("OK");
     return;
   }
 
@@ -233,6 +272,10 @@ bool enRangoBrazo2(int v) { return v >= BRAZO2_MIN && v <= BRAZO2_MAX; }
 // ──────────────────────────────────────────────
 
 void moverA(int destBase, int destBrazo1, int destBrazo2) {
+  moverASuave(destBase, destBrazo1, destBrazo2, MS_POR_PASO);
+}
+
+void moverASuave(int destBase, int destBrazo1, int destBrazo2, int msPorPaso) {
   int diffBase   = destBase   - anguloBase;
   int diffBrazo1 = destBrazo1 - anguloBrazo1;
   int diffBrazo2 = destBrazo2 - anguloBrazo2;
@@ -247,7 +290,7 @@ void moverA(int destBase, int destBrazo1, int destBrazo2) {
     servoBase.write(b);
     servoBrazo1.write(br1);
     servoBrazo2.write(br2);
-    delay(MS_POR_PASO);
+    delay(msPorPaso);
   }
 
   anguloBase   = destBase;
